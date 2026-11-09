@@ -148,9 +148,9 @@ A comprehensive reference for identifying government bodies by their letterhead,
 |----------|-------------|---------------|---------|
 | ID card / passport notice | הודעה בעניין תעודת זהות / דרכון | Renewal, pickup or biometric update | MEDIUM |
 | Population-registry notice | רישום לידה / נישואין / שינוי שם | A civil-status change was registered | LOW |
-| Status decision | החלטה בעניין מעמד | Decision on residency/citizenship status | HIGH - ערר to the Appeals Tribunal (בית הדין לעררים) within 30 days of the decision or of learning of it, whichever is earlier; then appeal to the Administrative Affairs Court within 45 days |
+| Status decision | החלטה בעניין מעמד | Decision on residency/citizenship status | HIGH - where the Appeals Tribunal (בית הדין לעררים) has jurisdiction, ערר within 30 days of publication of the decision, notice of it or learning of it, whichever is earliest (Entry into Israel Law s.13כד(ב)); then appeal to the Administrative Affairs Court within 45 days. Otherwise follow the route stated in the letter |
 | Visa extension | הארכת אשרה | Visa extension approval or denial (work, tourist, temporary-resident and other visa classes) | HIGH - affects legal stay |
-| Family reunification decision | החלטה בעניין איחוד משפחות | Decision on a spouse/family residency application | HIGH - appeal windows apply |
+| Family reunification decision | החלטה בעניין איחוד משפחות | Decision on a spouse/family residency application | HIGH - follow the route in the letter; the Appeals Tribunal 30-day rule above applies where the tribunal has jurisdiction |
 | Biometric appointment | זימון לטביעות אצבע | Appointment for biometrics | MEDIUM - must attend on date |
 | Work-permit notice | אישור / סירוב היתר עבודה | Decision on a work permit for a foreign worker | HIGH |
 
@@ -320,7 +320,7 @@ Not every seizure comes from Hotzaa LaPoal. Municipalities and other public bodi
 When a government letter cites information (a report, a calculation, an internal memo) that the user cannot otherwise access, the user has a statutory right to request it under the **Freedom of Information Law, 5758-1998** (חוק חופש המידע).
 
 - Each public body has a designated "Information Officer" (ממונה על חוק חופש המידע)
-- A request fee of 24 NIS applies, plus a per-hour handling charge from the 4th hour of work (36 NIS per hour in the indexed fees regulations) and per-page reproduction charge, with exemptions for certain categories
+- Fees have separate parts: a request fee (24 NIS); a handling fee only for work beyond the first three hours (36 NIS per hour); production fees per page or disc; and exemptions for certain categories, such as benefit recipients. These are the amounts published for the period from 1 October 2026; they are updated every October
 - The body must respond within 30 days; it may extend by 30 more, and for a voluminous or complex request by up to 60 more with written reasons, so 120 days at most
 - Refusal can be appealed administratively and then to court
 
