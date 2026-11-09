@@ -46,7 +46,7 @@ Because this skill computes an amount, each categorical row of the rate table is
 - [x] Orphan living allowance (דמי מחיה ליתומים), form 2910
 - [x] Burial fees (דמי קבורה), paid direct to Chevra Kadisha; basic burial free
 - [x] Dependents' allowance (קצבת תלויים), work-related death track; % of full work-disability pension; distinct from survivor's allowance; cannot receive both
-- [x] Pension-fund survivor pension (פנסיית שאירים): veteran Amitim split 60% spouse / 20% orphan / 40% orphan of both parents / 15% dependent parent, capped at 100%; fund-specific per takanon; plus the v1.3.0 risk-cover-lapse gate (confirm deposits were live before quoting any percentage)
+- [x] Pension-fund survivor pension (פנסיית שאירים): veteran Amitim split 60% spouse / 20% orphan / 40% orphan of both parents / 15% dependent parent, capped at 100%; fund-specific per takanon; check insured wage-based AND uninsured balance-based routes under the fund rules applicable at death; lapsed risk cover alone does not rule out a monthly pension
 - [x] Provident fund / life insurance beneficiary (מוטב) claims, section 147: beneficiary designation overrides the will
 - [x] Widow(er) already on old-age pension: old-age paid in full plus half the survivor's allowance (delivered in Step 3 + gotchas)
 - [x] Under-40 childless survivor exception: usually a one-time grant, but a monthly allowance if pregnant with / bearing the deceased's child, or (work-injury track) unable to support herself from work (delivered in Step 3)
@@ -59,7 +59,7 @@ Because this skill computes an amount, each categorical row of the rate table is
 - [x] Arnona discount: discretionary per authority (rate and capped area vary), never automatic, must be claimed with the entitlement letter, v1.3.0
 - [x] Severance to survivors under section 5 of the Severance Pay Law, with its own she'er definition and the employer as payer, delivered in Step 6, v1.3.0; mourning leave still mention-only
 - [x] Budgetary pension (פנסיה תקציבית) survivors track, delivered in Step 6, v1.3.0
-- [x] Pension-fund risk cover can lapse when deposits stop (hesder risk), so ask whether the deceased was still depositing before quoting a percentage, v1.3.0
+- [x] Pension-fund risk cover can lapse when deposits stop (hesder risk), so check deposits and arrangements, then assess both insured and uninsured survivor entitlements before quoting a percentage, v1.3.0
 - [x] Insurance limitation period: section 31 of the Insurance Contract Law, 3 years, 5 for life/illness-hospitalisation/LTC contracts made or renewed from 25.11.2020, v1.3.0
 - [ ] "חיסכון לכל ילד" residual withdrawal / residual old-age payment: NOT delivered in the body (out of this skill's core scope); route the family to the general Bituach Leumi navigator if it comes up
 
