@@ -177,7 +177,7 @@ BTL pays unpaid wages, severance, and pension contributions when a court issues 
 | 672 | בקשה לתיקון מקדמות | Self-employed | Adjust monthly advances (up to 4 times per year) |
 | 6131 | הצהרת עיסוקים | Resident changing employment status | Status update |
 | 627 / 628 | שאלון לקביעת תושבות | Resident temporarily abroad / returning | Residency determination |
-| 673 | הצהרת בני/בנות זוג | Non-working spouse | Spouse-exemption declaration |
+| 673 | הצהרת בני/בנות זוג | Eligible non-working spouse category; see contribution-rates.md | Declaration for the applicable spouse exemption, not an exemption for every unemployed partner |
 
 ## Living abroad and bilateral treaty forms
 
@@ -206,7 +206,8 @@ A digital ייפוי-כוח flow is also available via the representatives porta
 |---|---|---|---|
 | 900 | הודעה על עדכון פרטים אישיים | Update address, marital status, bank account | NOT a claim form, for existing beneficiaries |
 | 101 | ביטול סירוב לפניה למעסיקים ומשלמי פנסיה מוקדמת | Insured person | Cancel a previously filed Form 100 |
-| 100 | סירוב לפניה למעסיקים ומשלמי פנסיה מוקדמת | Insured person | Opt-out from employer outreach (NOT a Tax Authority form 100) |
+| 100 (claimant-facing form) | סירוב לפניה למעסיקים ומשלמי פנסיה מוקדמת | Insured person | Opt-out from outreach; distinct from the employer electronic payroll report also called Form 100 |
+| 100 (electronic employer report) | ריכוז נתוני שכר | Employer transmits to BTL | Payroll summary used for claims including unemployment; claimant asks the employer to transmit and confirms receipt. This is not the opt-out form |
 | 715 | בקשה להעברת כספים | Reroute payment | |
 | 88 | כתב הסכמה והתחייבות לקבלת גמלה | Beneficiary commitment | When benefit paid via third party |
 | 17 | כתב ויתור לחברות הביטוח | Privacy waiver to private insurers | |
@@ -230,3 +231,7 @@ A digital ייפוי-כוח flow is also available via the representatives porta
 - **Vocational-rehab sub-programs:** only 270 verified; no per-population sub-form numbers.
 - **Pikuach hasaba / vatikim-specific:** no separate forms beyond the existing old-age catalog plus 10420.
 - **Medical-committee logistics (expedite/copy/translation):** handled via the general portal at btl.gov.il/טפסים%20ואישורים/forms/VaadotTfasim, no numbered standalone forms.
+
+### Distinguishing the two Form 100 uses
+
+The [official BTL Form 100 FAQ](https://www.btl.gov.il/About/faq/HarvotBarzelOuestions/AVTALA_HB/Pages/TofesMeaa.aspx), read in full on 28 October 2026, describes a computerized payroll summary transmitted by the employer to BTL. The claimant should ensure transmission. This does not change the separately numbered claimant opt-out form above. Use employer certificate 1514 only when required or accepted under the applicable claim instructions; do not substitute it automatically for electronic transmission.

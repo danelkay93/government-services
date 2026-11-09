@@ -130,7 +130,7 @@ BTL runs ~85 numbered claim forms. The full catalog is in **`references/forms.md
 
 > **Form 900 is NOT a benefit claim.** It is the "Personal Details Update" form (הודעה על עדכון פרטים אישיים), used by an existing beneficiary to change an address, marital status, or bank account.
 >
-> **Form 100 in BTL** is the opt-out from employer outreach, NOT an employer report. The 1500's employer attachment is form **1514**. The "100" accountants mean is a Tax Authority payslip summary.
+> **Form 100 has two different BTL meanings.** The employer's electronic Form 100 is a payroll summary transmitted to BTL, including for unemployment; ask the employer to transmit it and confirm receipt. It is not a Tax Authority-only report. Separately, the claimant-facing form numbered 100 refuses employer/early-pension-payer outreach; Form 101 cancels that refusal. Form 1514 is the employer certificate used when applicable under the claim instructions, not a universal replacement for electronic Form 100. See the official dated source in `references/forms.md`.
 
 ### Most-used forms
 
@@ -195,7 +195,7 @@ Each employer applies the reduced bracket to the salary IT pays, so someone with
 ### Unpaid Leave (Chalat) and Non-Workers
 
 - **Unpaid leave:** the **employer** pays contributions for the first 2 months (and may deduct them from the employee's wage). **From the 3rd month** a person not working as an employee or self-employed pays the non-worker minimum of **266 NIS/month** themselves; if they draw unemployment, BTL deducts it from the benefit. Gaps here break the qualifying period for later claims.
-- **Non-working residents** owe a minimum of 266 NIS/month, and pay 12.09% / 12.17% on passive income above a 3,442 NIS/month exemption. **A non-working spouse (עקרת בית) is fully exempt and pays 0**, which is the single most common mistake here. Pensioners and people with both work and passive income are separate cases. Full table and exemptions: `references/contribution-rates.md`.
+- **Non-working residents** owe a minimum of 266 NIS/month, and pay 12.09% / 12.17% on passive income above a 3,442 NIS/month exemption. **The housewife exemption is category-specific:** it covers a non-working married/common-law woman whose partner is insured; practical Kol Zchut guidance also covers a non-working man in a male same-sex couple. It does not exempt every non-working spouse: an unemployed man married to an insured woman is not exempt on that fact alone. Pensioners and people with both work and passive income are separate cases. Full table and exemptions: `references/contribution-rates.md`.
 
 ## Other Programs (Beyond the 13 Main Ones)
 
