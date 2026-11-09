@@ -117,7 +117,7 @@ A working-age resident (18 to retirement age) who is NOT salaried, NOT self-empl
 
 | Who | Treatment |
 |---|---|
-| Non-working spouse (עקרת בית, or a non-working partner of an insured resident, including common-law and same-sex marriage) | **Fully exempt, pays 0.** Granted automatically in most cases; otherwise reported via Form 673 or the Form 6101 multi-year declaration. Lumping this person under the 266 minimum is the single most common mistake. |
+| Eligible non-working spouse (עקרת בית category): a non-working married/common-law woman whose partner is insured; practical guidance also includes a non-working man in a male same-sex couple | **Exempt only when the category and its conditions apply.** Do not extend this to every non-working partner: an unemployed man married to an insured woman is not exempt merely because she is insured. Use Form 673 or 6101 when the applicable BTL procedure requires a declaration. |
 | Old-age pension recipient / past retirement age | Special treatment, NOT the flat table. For benefit recipients, non-work income up to **688 NIS/month** is exempt, and the NI portion generally does not apply to a pensioner's income (health may still apply). Verify the exact split with BTL before quoting a number. |
 | Person with BOTH work income and passive income | The 3,442 exemption does NOT stack on top of work income. Work income consumes the exemption, so passive income is charged separately (often from the first shekel for higher earners). This is a coordination calculation. |
 | New immigrant (oleh) in the early residency window, full-time student, or resident working abroad for a foreign employer | Special rules (oleh reductions, bilateral social-security treaty coordination). Treat as a separate case, not the base table. |
@@ -129,3 +129,9 @@ A working-age resident (18 to retirement age) who is NOT salaried, NOT self-empl
 ## Amendment 252
 
 The 2026 rates were set by Amendment 252 to the National Insurance Law (חוק הביטוח הלאומי (תיקון מס' 252 והוראת שעה), התשפ"ה-2025), enacted 2025-01-14. Rates are CPI-indexed for 2026 through 2028 and switch to wage indexation from 2029.
+
+### Scope of the non-working-spouse exemption (checked 28 October 2026)
+
+The full [official BTL exemption page](https://www.btl.gov.il/Insurance/National%20Insurance/Pages/מי%20פטור%20מתשלום%20דמי%20ביטוח%20לאומי.aspx) describes the non-working married/common-law woman category. The full [Kol Zchut practical guide](https://www.kolzchut.org.il/he/פטור_מתשלום_דמי_ביטוח_לאומי) additionally describes a non-working man in a male same-sex couple; that extension is attributed to practical guidance, not to wording absent from the retrieved primary page. Confirm the claimant's category and record with BTL before advising zero contributions.
+
+בעברית: הפטור אינו חל על כל בן או בת זוג שאינם עובדים. המקור הרשמי מתאר אישה נשואה או ידועה בציבור שאינה עובדת ובן זוגה מבוטח; כל זכות כולל גם גבר שאינו עובד בזוגיות חד־מינית עם גבר. גבר מובטל הנשוי לאישה מבוטחת אינו פטור רק בשל ביטוחה. יש לבדוק את הקטגוריה ואת הרישום לפני הנחיה לשלם אפס.

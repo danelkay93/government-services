@@ -12,7 +12,7 @@ Anchor for Expert Review. Covers National Insurance contributions AND benefits.
   - Non-working residents and non-work (passive) income: 266 minimum, 3,442 exemption, 12.09%/12.17%.
 - The reduced-collection step (מדרגת גביה מופחתת) is a STATUTORY amount (base 7,522, CPI-indexed 2026-2028), NOT 60% of the average wage. Contributions ceiling 51,910 vs wage-replacing-benefit ceiling 52,570 are DIFFERENT numbers.
 - Unpaid leave (chalat): employer pays the first 2 months (deductible from wage), employee pays the 266 minimum from month 3 -- btl.gov.il Employee_in_vacation page.
-- Contribution EXEMPTIONS (override the rate tables): non-working spouse / akeret bayit = 0 (Form 673); old-age pension recipients / retirement age = NI-portion exempt, 688 NIS non-work-income floor; disability 75%+/100% permanent = exempt.
+- Contribution EXEMPTIONS (override the rate tables): eligible housewife category, not every non-working spouse: married/common-law non-working woman with insured partner; non-working man in a male same-sex couple per the attributed practical source (see contribution-rates.md; Form 673 when applicable); old-age pension recipients / retirement age = NI-portion exempt, 688 NIS non-work-income floor; disability 75%+/100% permanent = exempt.
 - Coordination: passive-income exemption does NOT stack on work income; te'um dmei bituach for multiple employers / salary plus early pension.
 - The 13 main benefit programs with 2026 amounts and qualifying periods -- references/benefit-programs.md.
 - INCOME TESTS must be stated as graduated bands, not cliffs:
