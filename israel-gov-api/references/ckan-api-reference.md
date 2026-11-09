@@ -44,7 +44,7 @@ None required (public API).
 ### Endpoint status notes
 | Endpoint | Status | Notes |
 |----------|--------|-------|
-| `/action/datastore_search_sql` | 200 for most queries | NOT disabled (re-verified 2026-08-27). `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `sum()` and `LIMIT` all work. The WAF blocks injection-signature substrings (`count(`, `1=1`, `UNION`) with an HTML 404, not a JSON error. Use `sum(1)` instead of `count(*)`, and take plain row counts from `datastore_search`'s `total`. |
+| `/action/datastore_search_sql` | Historical observation, 2026-08-27 | Several SQL forms returned data; some patterns returned HTML 404. That response alone cannot establish its cause. Do not rewrite or probe a denied query. For permitted requests, `datastore_search` supplies a matching-record `total` without SQL. |
 
 ## Common Organization IDs
 
@@ -63,7 +63,7 @@ Verified against `organization_show?id=<id>` on 2026-06-16. Stale aliases like `
 Run `curl -s "https://data.gov.il/api/3/action/organization_list" | head -200` to enumerate the canonical IDs; ministry IDs change without notice.
 
 ## Response Format
-All responses return JSON with:
+Successful CKAN responses normally return JSON with the following envelope. HTTP errors may contain a useful JSON `error` (including HTTP 409) or a non-JSON body; inspect status and shape before parsing:
 ```json
 {
   "success": true/false,
@@ -76,7 +76,7 @@ All responses return JSON with:
 }
 ```
 
-The `result.total` field reports the full record count of the resource (not the page); use it to plan pagination.
+The `result.total` field reports the count matching that request's filters (not the page); use it to plan pagination. Requests do not retain earlier filters. For `lists`, map each row position to `result.fields` in order. CSV/TSV bodies are headerless: write a quoted header from those fields with the corresponding comma/tab delimiter. The helper emits delimited exports without a prose preamble; `--json` preserves the raw result.
 
 ## Rate Limits
-Undocumented, and measured lighter than previously described: on 2026-08-27, 25 rapid sequential `datastore_search` calls in 6.5 seconds all returned 200, and about 60 calls in one session drew no throttling. What does block is the SQL-pattern WAF, which answers an injection-signature substring (`count(`, `1=1`, `UNION`) with an HTML 404 rather than a 403; rephrasing the query clears it and backing off does not. A 403 with the body "Security Violation" was recorded in June 2026 but could not be reproduced on 2026-08-27. If one does appear, treat it as a session block: drop cookies, use a fresh `User-Agent`, back off exponentially. Modest delays on bulk pulls remain good manners.
+No current rate limit is verified here. Historical successful bursts do not rule out throttling now. Follow documented limits and Retry-After when supplied. An explicit security/access denial (including 403 "Security Violation") requires stopping the operation, reporting it and contacting official support. Do not change cookies, User-Agent, client, proxy or query shape to evade it. An ambiguous HTML 404 calls for checking existing metadata and official documentation, not probing alternative queries. Ordinary structured validation errors can be corrected; documented alternative access is usable only if it does not evade a denial.
