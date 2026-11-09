@@ -9,10 +9,15 @@ Extracts structured information from Israeli government document text:
 - Consequences of inaction
 - Relevant laws and regulations
 
+Every finding is a heuristic candidate taken from the normalized text (see
+normalize_text); spans index that normalized text, not the original file.
+Deadlines are literal wording only: the typical rule for a document type is
+reported separately as a procedure reference, never as a deadline.
+
 Usage:
-    python document-analyzer.py --text "document text here"
     python document-analyzer.py --file path/to/document.txt
     pdftotext -layout letter.pdf letter.txt && python document-analyzer.py --file letter.txt
+    python document-analyzer.py --text "short test text only"
     python document-analyzer.py --help
 """
 
@@ -21,7 +26,6 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
 from typing import Optional
 
 
@@ -183,14 +187,16 @@ DOCUMENT_TYPES = {
     "benefit_approval": {
         "name_he": "אישור גמלה / תביעה",
         "name_en": "Benefit Approval",
-        "patterns": [r"אושר[הו]", r"תביעתך אושרה", r"(?<!לא )(?<!אינך )(?<!אינו )(?<!אינה )זכאי"],
+        # Scored only from extract_decision_evidence(), which handles negation;
+        # the old word lists are not counted a second time.
+        "patterns": [],
         "urgency": "LOW",
         "typical_window": None,
     },
     "benefit_denial": {
         "name_he": "דחיית תביעה",
         "name_en": "Benefit Denial",
-        "patterns": [r"נדח[תה]", r"תביעתך נדחתה", r"(?:לא|אינך|אינו|אינה)\s+זכאי"],
+        "patterns": [],  # scored from decision evidence, like benefit_approval
         "urgency": "HIGH",
         "typical_window": "Bituach Leumi: 12 months to appeal to the regional Labor Court (6 months for alimony decisions). A medical-committee decision has its own, shorter ערר window (60 days general disability, 30 days work injury).",
     },
@@ -214,7 +220,7 @@ DOCUMENT_TYPES = {
         "patterns": [r"כתב תביעה", r"התובע", r"הנתבע"],
         "strong": [r"להגיש כתב הגנה", r"^\s*כתב תביעה\s*$"],
         "urgency": "URGENT",
-        "typical_window": 'Statement of defence: 60 days from service in Magistrate and District courts (Civil Procedure Regulations 2018, reg. 9), 30 days in Small Claims. Check the summons.',
+        "typical_window": 'Statement of defence: identify the procedure. Standard periods from service are 60 days for ordinary civil proceedings, 45 for fast track, 30 for eviction, 120 for medical negligence, and 30 for Small Claims. Verify the applicable rules, summons or order, service, recesses and any extension; this reference is not a calculated due date.',
     },
     "judgment": {
         "name_he": "פסק דין",
@@ -374,6 +380,17 @@ class AnalysisResult:
     dates_found: list = field(default_factory=list)
     confidence: str = "LOW"
     notes: list = field(default_factory=list)
+    # Every span in this result (deadlines and the evidence lists below) is a
+    # Python string offset, end exclusive, into the normalized text analysis ran
+    # on (see normalize_text), not into the original file or --text argument.
+    offset_basis: str = "normalized_text"
+    decision_status: str = "unknown"
+    decision_evidence: list = field(default_factory=list)
+    monetary_amount_evidence: list = field(default_factory=list)
+    extraction_warnings: list = field(default_factory=list)
+    # Typical rule for this kind of letter, guessed from sender and wording. It
+    # was not found in the document, is not a deadline and never sets urgency.
+    procedure_reference: Optional[str] = None
 
 
 def identify_sender(text: str) -> tuple[Optional[str], Optional[str], str, Optional[str]]:
@@ -483,13 +500,77 @@ def refine_window(doc_id: Optional[str], sender_id: Optional[str], text: str,
     return window
 
 
-def identify_document_type(text: str) -> tuple[Optional[str], Optional[str], str, Optional[str], Optional[str]]:
-    """Identify the type of document."""
+def _get_context(text: str, start: int, end: int, window: int = 50) -> str:
+    """Context around one occurrence. Offsets index `text` (end exclusive); in
+    analyze_document() that is the normalized text, not the original file."""
+    return text[max(0, start - window):min(len(text), end + window)].strip()
+
+
+# Benefit approval/denial are scored from decision evidence, not word lists.
+_DECISION_TYPES = {"benefit_approval": "approval", "benefit_denial": "denial"}
+_URGENCY_RANK = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "URGENT": 4}
+
+
+def extract_decision_evidence(text: str) -> list[dict]:
+    """Bounded approval/denial cues: lexical evidence, not a legal decision."""
+    approval = r"(?:אושר(?:ה|ו)?|זכאי(?:ת|ם|ות)?)"
+    denial = r"(?:נדחה|נדחתה|נדחו)"
+    negator = r"[וש]?(?:לא|אינך|אינכם|אינכן|אינו|אינה|אינם|אינן|אינני|איננו)"
+    patterns = [
+        (rf"(?<!\w){negator}\s+{approval}(?!\w)", "denial"),
+        # A negated denial is not proof of approval.
+        (rf"(?<!\w){negator}\s+{denial}(?!\w)", "uncertain"),
+        (rf"(?<!\w)[וש]?טרם\s+(?:{approval}|{denial})(?!\w)", "uncertain"),
+        (rf"(?<!\w)[וש]?{denial}(?!\w)", "denial"),
+        (rf"(?<!\w)[וש]?{approval}(?!\w)", "approval"),
+    ]
+    evidence = []
+    for pattern, kind in patterns:
+        for match in re.finditer(pattern, text):
+            start, end = match.span()
+            # An earlier (negated) pattern wins over the bare word inside it.
+            if any(start < item["normalized_span"][1] and end > item["normalized_span"][0]
+                   for item in evidence):
+                continue
+            evidence.append({
+                "kind": kind,
+                "matched_text": match.group(),
+                "normalized_span": [start, end],
+                "raw_context": _get_context(text, start, end),
+            })
+    return sorted(evidence, key=lambda item: item["normalized_span"])
+
+
+def _decision_status(evidence: list[dict]) -> str:
+    kinds = {item["kind"] for item in evidence}
+    if "uncertain" in kinds or {"approval", "denial"} <= kinds:
+        return "mixed_or_unclear"
+    if kinds == {"approval"}:
+        return "unverified_approval_wording"
+    if kinds == {"denial"}:
+        return "denial_evidence"
+    return "unknown"
+
+
+def identify_document_type(text: str, evidence: Optional[list] = None
+                           ) -> tuple[Optional[str], Optional[str], str, Optional[str], Optional[str]]:
+    """Identify the type: (name_he, name_en, urgency, typical_window, doc_id).
+
+    typical_window is a reference rule for the type, never a deadline found in
+    the document, and it does not set the urgency.
+    """
+    if evidence is None:
+        evidence = extract_decision_evidence(text)
+    status = _decision_status(evidence)
     best_match = None
     best_score = 0
+    other_match = None  # best type that approval/denial wording does not drive
+    other_score = 0
 
     for doc_id, doc_info in DOCUMENT_TYPES.items():
         score = 0
+        if doc_id in _DECISION_TYPES:
+            score = sum(1 for item in evidence if item["kind"] == _DECISION_TYPES[doc_id])
         for pattern in doc_info["patterns"]:
             matches = re.findall(pattern, text)
             score += len(matches)
@@ -501,39 +582,125 @@ def identify_document_type(text: str) -> tuple[Optional[str], Optional[str], str
         if score > best_score:
             best_score = score
             best_match = doc_id
+        if doc_id not in _DECISION_TYPES and score > other_score:
+            other_score = score
+            other_match = doc_id
+
+    other_urgency = DOCUMENT_TYPES[other_match]["urgency"] if other_match else "UNKNOWN"
+    if status == "mixed_or_unclear" and (best_match is None or best_match in _DECISION_TYPES):
+        # Do not pick the newest, most frequent or first-mentioned outcome.
+        urgency = "URGENT" if other_urgency == "URGENT" else "HIGH"
+        return "ראיות החלטה מעורבות / לא ברורות", "Mixed or unclear decision evidence", urgency, None, None
+    if status == "denial_evidence" and (
+        best_match is None or DOCUMENT_TYPES[best_match]["urgency"] in ("LOW", "MEDIUM")
+    ):
+        best_match = "benefit_denial"
 
     if best_match and best_score >= 1:
         doc = DOCUMENT_TYPES[best_match]
-        return (
-            doc["name_he"],
-            doc["name_en"],
-            doc["urgency"],
-            doc["typical_window"],
-            best_match,
-        )
+        name_he, name_en, urgency = doc["name_he"], doc["name_en"], doc["urgency"]
+        if status == "unverified_approval_wording" and best_match == "benefit_approval":
+            # Wording alone cannot establish approval, no required action or LOW
+            # urgency: indirect negation and conditions are not resolved.
+            name_he, name_en = "נוסח הקשור לאישור – לא אומת", "Unverified approval-related wording"
+            urgency = other_urgency if _URGENCY_RANK[other_urgency] >= _URGENCY_RANK["MEDIUM"] else "UNKNOWN"
+        elif status == "unverified_approval_wording" and urgency == "LOW":
+            urgency = "UNKNOWN"
+        elif status == "mixed_or_unclear" and _URGENCY_RANK[urgency] < _URGENCY_RANK["HIGH"]:
+            urgency = "HIGH"
+        return name_he, name_en, urgency, doc["typical_window"], best_match
     return None, None, "UNKNOWN", None, None
 
 
-def extract_monetary_amounts(text: str) -> list[str]:
-    """Extract monetary amounts from the document."""
-    amounts = []
+# Currency markers, including the two-apostrophe spelling ש''ח. A letter or
+# underscore right next to the marker means it is part of another word.
+_CURRENCY = r"(?:₪|(?<![A-Za-zא-ת_])(?:ש[\"״]ח|ש''ח|שקלים|שקל|NIS|ILS)(?![A-Za-zא-ת_]))"
+# Deliberately broad candidate token, then a strict fullmatch: never truncate.
+_AMOUNT_TOKEN = r"(?:[+\-−]\s*)?[0-9][0-9.,+\-−/:–—־'’]*"
+_AMOUNT_BOUNDARY = r"[\w.,+\-−/–—־'’]"
+_VALID_AMOUNT = r"(?:[+\-−]\s*)?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]{1,2})?"
 
-    # NIS amounts with various formats
-    # A stray ":" or "," between the number and the currency is how pdftotext
-    # reorders "סכום: 18,450 ש\"ח" from an RTL PDF ("18,450 :ש\"ח").
-    cur = r"(?:ש[\"״]ח|ש''ח|שקלים|שקל|NIS|ILS|₪)"
-    nis_patterns = [
-        r"(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*[:,]?\s*" + cur,
-        cur + r"\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)",
-        r"סך\s*(?:של\s*)?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)",
+
+def _nearest_char(text: str, index: int, step: int) -> str:
+    """First non-space character from index, moving by step (-1 or 1)."""
+    while 0 <= index < len(text) and text[index].isspace():
+        index += step
+    return text[index] if 0 <= index < len(text) else ""
+
+
+def _adjacent_numeric_fragment(text: str, index: int, step: int) -> bool:
+    """Detect a numeric continuation across spaced separators, not prose punctuation."""
+    saw_separator = False
+    while 0 <= index < len(text):
+        char = text[index]
+        if char.isspace():
+            index += step
+            continue
+        if char in ",.'’/:+−–—־-":
+            saw_separator = True
+            index += step
+            continue
+        return saw_separator and char in "0123456789"
+    return False
+
+
+def extract_monetary_amount_evidence(text: str) -> list[dict]:
+    """Validate whole numeric candidates; keep every occurrence and rejection.
+
+    Supported: ASCII digits, an optional leading + / - / Unicode minus, comma
+    thousands groups and one or two decimals. Any other form is reported as
+    rejected, never trimmed into a valid-looking value. A number after a bare
+    "סך" has no currency marker, so no currency is assumed. Spans index the
+    text passed in (the normalized text in analyze_document), end exclusive.
+    """
+    patterns = [
+        # A stray ":" or "," before the currency is how pdftotext reorders
+        # "סכום: 18,450 ש\"ח" from an RTL PDF ("18,450 :ש\"ח").
+        (rf"(?<!{_AMOUNT_BOUNDARY})(?<![0-9]:)(?P<number>{_AMOUNT_TOKEN})\s*(?:[:,]\s*)?(?P<currency>{_CURRENCY})", False),
+        (rf"(?P<currency>{_CURRENCY})\s*(?P<number>{_AMOUNT_TOKEN})(?!{_AMOUNT_BOUNDARY})", False),
+        (rf"(?<!\w)[בו]?סך\s+(?:של\s+)?(?P<number>{_AMOUNT_TOKEN})(?!{_AMOUNT_BOUNDARY})", True),
     ]
+    evidence = {}
+    for pattern, unmarked_currency in patterns:
+        for match in re.finditer(pattern, text):
+            number_span = match.span("number")
+            raw_number = match.group("number")
+            before = _nearest_char(text, match.start() - 1, -1)
+            after = _nearest_char(text, match.end(), 1)
+            rejection = None
+            if not re.fullmatch(_VALID_AMOUNT, raw_number):
+                rejection = "unsupported_or_malformed_number"
+            elif ((before and before in "0123456789+−-/")
+                  or (after and after in "0123456789+−-/")
+                  or _adjacent_numeric_fragment(text, match.start() - 1, -1)
+                  or _adjacent_numeric_fragment(text, match.end(), 1)
+                  or (before == "(" and after == ")")):
+                rejection = "ambiguous_adjacent_number_or_sign"
+            previous = evidence.get(number_span)
+            if previous and (unmarked_currency or not (rejection and previous["status"] == "accepted")):
+                # One numeric occurrence may have two markers. A rejected view
+                # takes precedence so an alternate match cannot discard a sign.
+                continue
+            normalized = re.sub(r"\s+", "", raw_number).replace("−", "-")
+            evidence[number_span] = {
+                "status": "rejected" if rejection else "unverified_currency" if unmarked_currency else "accepted",
+                "reason": rejection or ("currency_unspecified" if unmarked_currency else None),
+                "matched_text": match.group(),
+                "normalized_span": list(match.span()),
+                "raw_number": raw_number,
+                "number_normalized_span": list(number_span),
+                "amount": None if rejection or unmarked_currency else f"{normalized} NIS",
+                "currency": None if unmarked_currency else "NIS",
+                "currency_marker": None if unmarked_currency else match.group("currency"),
+                "raw_context": _get_context(text, *match.span()),
+            }
+    return sorted(evidence.values(), key=lambda item: item["number_normalized_span"])
 
-    for pattern in nis_patterns:
-        matches = re.findall(pattern, text)
-        for match in matches:
-            amounts.append(f"{match} NIS")
 
-    return list(set(amounts))
+def extract_monetary_amounts(text: str) -> list[str]:
+    """Compatibility list: accepted amounts in text order; repeats stay separate."""
+    return [item["amount"] for item in extract_monetary_amount_evidence(text)
+            if item["status"] == "accepted"]
 
 
 def extract_dates(text: str) -> list[str]:
@@ -614,41 +781,74 @@ def extract_laws(text: str) -> list[dict]:
     return laws
 
 
+# Finite vocabulary, not a general Hebrew-number parser.
 HEBREW_NUMBER_WORDS = {
-    "שבעה": 7, "עשרה": 10, "ארבעה עשר": 14, "חמישה עשר": 15, "עשרים": 20,
-    "עשרים ואחד": 21, "שלושים": 30, "ארבעים וחמישה": 45, "שישים": 60, "ששים": 60,
-    "תשעים": 90, "מאה ועשרים": 120,
+    "שלושה": 3, "שישה": 6, "שבעה": 7, "עשרה": 10, "שנים עשר": 12, "ארבעה עשר": 14,
+    "חמישה עשר": 15, "עשרים": 20, "עשרים ואחד": 21, "שלושים": 30, "ארבעים": 40,
+    "ארבעים וחמישה": 45, "שישים": 60, "ששים": 60, "תשעים": 90, "מאה ועשרים": 120,
 }
-_NUM = r"(\d+|" + "|".join(sorted(HEBREW_NUMBER_WORDS, key=len, reverse=True)) + r")"
+# Longest first; the words of a multi-word number may be split by any whitespace.
+_NUM_WORDS = "|".join(
+    r"\s+".join(map(re.escape, words.split()))
+    for words in sorted(HEBREW_NUMBER_WORDS, key=len, reverse=True)
+)
+_WITHIN = r"(?<!\w)(?:בתוך|תוך)"
+_DAY_UNIT = r"(?P<unit>ימים|יום|ימי\s+(?:עסקים|עבודה))(?!\w)"
+_MONTH_UNIT = r"(?P<unit>חודשים|חודש)(?!\w)"
+# A sentence-ending period may follow the date; another digit group may not.
+_LITERAL_DATE = r"(?P<value>[0-9]{1,2}[/.][0-9]{1,2}[/.][0-9]{2,4})(?![\w/]|\.[0-9])"
 
 
 def extract_deadlines(text: str) -> list[dict]:
-    """Extract deadline information from the document."""
+    """Report deadline wording literally present in the text.
+
+    These are candidates, not calculated due dates: nothing here knows the
+    service or receipt date, the procedure, recesses or extensions, and
+    business days ("ימי עסקים") are never converted into calendar days. Spans
+    index the text passed in (the normalized text in analyze_document).
+    """
     deadlines = []
 
     # "within X days" written as digits or words: "תוך 30 יום", "בתוך 20 ימים",
     # "תוך שלושים ימים". "יום" (singular after a number) is the common form.
-    day_patterns = [
-        (rf"(?:ב)?תוך\s*{_NUM}\s*(?:ימים|יום|ימי עבודה)", "days from"),
-        (r"לא\s*יאוחר\s*מ[- ]?(\d{1,2}[/.]\d{1,2}[/.]\d{2,4})", "by date"),
-        (r"עד\s*(?:ליום|לתאריך)?\s*(\d{1,2}[/.]\d{1,2}[/.]\d{2,4})", "by date"),
-        (rf"(?:ב)?תוך\s*{_NUM}\s*(?:חודשים|חודש)", "months from"),
+    patterns = [
+        (rf"{_WITHIN}\s*(?P<value>[0-9]+)\s*{_DAY_UNIT}", "days from", "literal_digits"),
+        (rf"{_WITHIN}\s+(?P<value>{_NUM_WORDS})\s+{_DAY_UNIT}", "days from", "supported_number_words"),
+        (rf"{_WITHIN}\s*(?P<value>[0-9]+)\s*{_MONTH_UNIT}", "months from", "literal_digits"),
+        (rf"{_WITHIN}\s+(?P<value>{_NUM_WORDS})\s+{_MONTH_UNIT}", "months from", "supported_number_words"),
+        (rf"(?<!\w)לא\s*יאוחר\s*מ[- ]?(?:יום|תאריך)?\s*{_LITERAL_DATE}", "by date", "literal_date"),
+        (rf"(?<!\w)עד\s*(?:ליום|לתאריך|יום|תאריך)?\s*{_LITERAL_DATE}", "by date", "literal_date"),
     ]
 
-    for pattern, dtype in day_patterns:
+    for pattern, dtype, source in patterns:
         for m in re.finditer(pattern, text):
-            value = m.group(1)
-            value = str(HEBREW_NUMBER_WORDS.get(value, value))
-            start, end = max(0, m.start() - 50), min(len(text), m.end() + 50)
+            raw_value = m.group("value")
+            value = (str(HEBREW_NUMBER_WORDS[" ".join(raw_value.split())])
+                     if source == "supported_number_words" else raw_value)
+            unit_text = m.groupdict().get("unit")
+            if unit_text is None:
+                unit = None
+            elif unit_text.startswith("חודש"):
+                unit = "months"
+            elif re.fullmatch(r"ימי\s+(?:עסקים|עבודה)", unit_text):
+                unit = "business_days"
+            else:
+                unit = "days"
             deadlines.append({
                 "type": dtype,
                 "value": value,
+                "raw_value": raw_value,
+                "value_source": source,
+                "unit": unit,
+                "unit_text": unit_text,
+                "matched_text": m.group(),
+                "normalized_span": [m.start(), m.end()],
                 # Context from the match position, not text.find(value): "12"
                 # would otherwise land inside a date like 12.10.2026.
-                "raw_context": text[start:end].strip(),
+                "raw_context": _get_context(text, m.start(), m.end()),
             })
 
-    return deadlines
+    return sorted(deadlines, key=lambda d: d["normalized_span"])
 
 
 def extract_consequences(text: str) -> list[str]:
@@ -728,8 +928,13 @@ def normalize_text(text: str) -> tuple[str, list[str]]:
 
 
 def analyze_document(text: str) -> AnalysisResult:
-    """Main analysis function. Extracts all structured information."""
+    """Main analysis function. Extracts all structured information.
+
+    All extraction runs on the normalize_text() output, so every span in the
+    result indexes that normalized text, not the original file or argument.
+    """
     result = AnalysisResult()
+    original = text
     text, norm_notes = normalize_text(text)
     result.notes.extend(norm_notes)
 
@@ -738,8 +943,13 @@ def analyze_document(text: str) -> AnalysisResult:
     result.sender = sender_he
     result.sender_en = sender_en
 
-    # Identify document type
-    doc_he, doc_en, urgency, typical_window, doc_id = identify_document_type(text)
+    # Approval/denial wording feeds the type score and is reported as evidence.
+    result.decision_evidence = extract_decision_evidence(text)
+    result.decision_status = _decision_status(result.decision_evidence)
+
+    # Identify document type. typical_window is a reference rule for the type,
+    # never a deadline found in this letter.
+    doc_he, doc_en, urgency, typical_window, doc_id = identify_document_type(text, result.decision_evidence)
     # "Approval" is only safe to report as good news on a Bituach Leumi letter.
     # Elsewhere ("התנגדותך נדחתה והתכנית אושרה") it can hide an adverse decision.
     if doc_id == "benefit_approval" and sender_id != "national_insurance":
@@ -754,9 +964,8 @@ def analyze_document(text: str) -> AnalysisResult:
         doc_he, doc_en = "קנס מרשות המסים", "Tax Authority Fine"
     if sender_id == "enforcement_authority" and typical_window and typical_window.startswith("Execution Office registrar decision"):
         doc_he, doc_en = "החלטת רשם ההוצאה לפועל", "Execution Office Registrar Decision"
-    # Short statutory windows make the letter URGENT even when none is quoted.
-    if typical_window and re.search(r"within (?:15|20|30) days", typical_window) and urgency in ("HIGH", "MEDIUM", "LOW", "UNKNOWN"):
-        urgency = "URGENT"
+    # A typical rule is a guess from sender and wording, so it never sets the
+    # urgency; only a window written in the letter itself can (below).
     result.document_type = doc_he
     result.document_type_en = doc_en
     result.urgency = urgency
@@ -766,7 +975,9 @@ def analyze_document(text: str) -> AnalysisResult:
         typical_window = None
 
     # Extract structured data
-    result.monetary_amounts = extract_monetary_amounts(text)
+    result.monetary_amount_evidence = extract_monetary_amount_evidence(text)
+    result.monetary_amounts = [item["amount"] for item in result.monetary_amount_evidence
+                               if item["status"] == "accepted"]
     result.dates_found = extract_dates(text)
     result.reference_numbers = extract_reference_numbers(text)
     result.laws_referenced = extract_laws(text)
@@ -774,7 +985,8 @@ def analyze_document(text: str) -> AnalysisResult:
     result.consequences = extract_consequences(text)
     result.required_actions = extract_required_actions(text)
 
-    # A stated window of 30 days or less makes the letter URGENT whatever its type.
+    # A window of 30 days or less written in the letter makes it URGENT whatever
+    # its type. Business days count here too; none are converted to calendar dates.
     day_windows = [int(d["value"]) for d in result.deadlines
                    if d["type"] == "days from" and d["value"].isdigit()]
     if day_windows and min(day_windows) <= 30 and result.urgency in ("LOW", "MEDIUM", "HIGH", "UNKNOWN"):
@@ -789,6 +1001,34 @@ def analyze_document(text: str) -> AnalysisResult:
         1 if result.reference_numbers else 0,
     ])
     result.confidence = "HIGH" if signals >= 4 else "MEDIUM" if signals >= 2 else "LOW"
+    if result.decision_status == "mixed_or_unclear":
+        result.confidence = "LOW"
+        result.extraction_warnings.append(
+            "Mixed or unclear decision wording: no final outcome or chronology was inferred. "
+            "Review all decision evidence against the original document."
+        )
+    elif result.decision_status == "unverified_approval_wording":
+        result.confidence = "LOW"
+        result.extraction_warnings.append(
+            "Approval-related words were found, but approval and the absence of required action were not established. "
+            "Indirect negation, conditions and historical context are not resolved."
+        )
+    for item in result.monetary_amount_evidence:
+        if item["status"] == "rejected":
+            result.extraction_warnings.append(
+                f"Monetary candidate {item['matched_text']!r} at normalized-text span {item['normalized_span']} "
+                f"was not accepted: {item['reason']}."
+            )
+        elif item["status"] == "unverified_currency":
+            result.extraction_warnings.append(
+                f"Number {item['raw_number']!r} after 'סך' at normalized-text span {item['normalized_span']} "
+                "has no currency marker; no monetary amount was inferred."
+            )
+    if text != original and (result.decision_evidence or result.monetary_amount_evidence or result.deadlines):
+        result.extraction_warnings.append(
+            "Spans index the normalized text (bidi marks removed, spaces or lines adjusted), "
+            "not positions in the original file."
+        )
 
     # Add helpful notes
     if result.urgency == "URGENT":
@@ -796,10 +1036,22 @@ def analyze_document(text: str) -> AnalysisResult:
             "This document appears to be URGENT. Recommend immediate professional consultation."
         )
     if typical_window and (not result.deadlines or doc_id in ALWAYS_NOTE):
+        result.procedure_reference = typical_window
         result.notes.append(
-            ("No explicit deadline found in the text. " if not result.deadlines else "Also note: ")
-            + f"Typical rule for this document type: {typical_window} Check what the period is counted from (service, receipt, or learning of the decision), not the date printed on the letter."
+            ("No deadline wording was found in the text; that does not mean none applies. " if not result.deadlines else "")
+            + "See PROCEDURE REFERENCE: a typical rule guessed from the sender and wording, not a deadline found in "
+            "this letter, and it did not change the urgency. Verify the procedure, the source rule and the actual "
+            "service, receipt or knowledge date before relying on any period."
         )
+    elif not result.deadlines:
+        result.notes.append(
+            "No deadline wording was found in the text. That does not mean none applies: check the original "
+            "letter and the applicable procedure. No response window was inferred."
+        )
+    result.notes.append(
+        "Classification and extraction are heuristic candidates, not a verified decision or deadline. "
+        "Deadline wording is reported literally; when its period starts depends on service or receipt, which the text does not prove."
+    )
     if not result.sender:
         result.notes.append(
             "Could not identify the sending body. Check the letterhead, return address, or envelope."
@@ -847,6 +1099,20 @@ def format_output(result: AnalysisResult, output_format: str = "text") -> str:
     lines.append(f"CONFIDENCE: {result.confidence}")
     lines.append("")
 
+    # Decision wording and warnings. Spans index the normalized text.
+    if result.decision_evidence:
+        lines.append(f"DECISION WORDING ({result.decision_status}; candidates, not a verified outcome):")
+        for item in result.decision_evidence:
+            lines.append(f"  - {item['kind']}: {item['matched_text']} (normalized-text span {item['normalized_span']})")
+            lines.append(f"    Context: ...{item['raw_context']}...")
+        lines.append("")
+
+    if result.extraction_warnings:
+        lines.append("EXTRACTION WARNINGS:")
+        for warning in result.extraction_warnings:
+            lines.append(f"  * {warning}")
+        lines.append("")
+
     # Reference numbers
     if result.reference_numbers:
         lines.append("REFERENCE NUMBERS:")
@@ -856,9 +1122,15 @@ def format_output(result: AnalysisResult, output_format: str = "text") -> str:
 
     # Monetary amounts
     if result.monetary_amounts:
-        lines.append("MONETARY AMOUNTS FOUND:")
-        for amount in result.monetary_amounts:
-            lines.append(f"  - {amount}")
+        lines.append("MONETARY AMOUNTS FOUND (each occurrence in text order; verify against the letter):")
+        accepted = [item for item in result.monetary_amount_evidence if item["status"] == "accepted"]
+        if accepted:
+            for item in accepted:
+                lines.append(f"  - {item['amount']} (normalized-text span {item['number_normalized_span']})")
+                lines.append(f"    Context: ...{item['raw_context']}...")
+        else:
+            for amount in result.monetary_amounts:
+                lines.append(f"  - {amount}")
         lines.append("")
 
     # Dates
@@ -870,9 +1142,12 @@ def format_output(result: AnalysisResult, output_format: str = "text") -> str:
 
     # Deadlines
     if result.deadlines:
-        lines.append("DEADLINES:")
+        lines.append("DEADLINE WORDING FOUND (literal text; not a calculated due date):")
         for deadline in result.deadlines:
-            lines.append(f"  - {deadline['type']}: {deadline['value']}")
+            unit = f" {deadline['unit_text']}" if deadline.get("unit_text") else ""
+            lines.append(f"  - {deadline['type']}: {deadline['value']}{unit}")
+            if deadline.get("matched_text"):
+                lines.append(f"    Literal: {deadline['matched_text']} (normalized-text span {deadline.get('normalized_span')})")
             if deadline.get("raw_context"):
                 lines.append(f"    Context: ...{deadline['raw_context']}...")
         lines.append("")
@@ -897,6 +1172,13 @@ def format_output(result: AnalysisResult, output_format: str = "text") -> str:
         for law in result.laws_referenced:
             section = f", Section {law['section']}" if law.get("section") else ""
             lines.append(f"  - {law['law_he']} ({law['law_en']}{section})")
+        lines.append("")
+
+    # A guessed typical rule, kept apart from what was found in the letter
+    if result.procedure_reference:
+        lines.append("PROCEDURE REFERENCE (typical rule guessed from sender and wording; not found in this letter; not a deadline):")
+        lines.append(f"  {result.procedure_reference}")
+        lines.append("  Verify the procedure, the source rule and the actual service, receipt or knowledge date before relying on any period.")
         lines.append("")
 
     # Notes
@@ -932,11 +1214,13 @@ SELF_TESTS = [
 
 def run_self_tests() -> int:
     failed = 0
-    for name, letter, want_type, want_note in SELF_TESTS:
+    for name, letter, want_type, want_reference in SELF_TESTS:
         r = analyze_document(letter)
-        notes = " ".join(r.notes)
+        # Typical rules now live in procedure_reference, never in the deadline
+        # findings or the urgency, so the expected rule text is checked there.
+        reference = r.procedure_reference or ""
         ok = (want_type is None or (r.document_type_en or "").startswith(want_type))
-        ok = ok and (want_note is None or want_note in notes)
+        ok = ok and (want_reference is None or want_reference in reference)
         if "never LOW" in name:
             ok = ok and r.urgency != "LOW"
         if "30 יום" in name:
@@ -960,7 +1244,7 @@ def main():
     input_group.add_argument(
         "--text",
         type=str,
-        help="Document text to analyze (paste directly)",
+        help="Short test text only; for a real letter use --file (command-line text can be kept in shell history and process lists)",
     )
     input_group.add_argument(
         "--file",
