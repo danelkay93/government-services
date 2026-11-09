@@ -71,12 +71,12 @@ GET https://data.gov.il/api/3/action/datastore_search?resource_id=RESOURCE_ID&q=
 
 **`datastore_search_sql` WORKS, with one WAF-shaped hole.** Re-tested live on 2026-08-27: `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `sum()` and `LIMIT` all return HTTP 200 with `success:true` and real rows. What the WAF blocks is a small set of injection-signature substrings, `count(`, `1=1` and `UNION` among them, and it does so with an **HTML 404 page, not a JSON error and not a 403**, so a client that only checks `success` will read the block as a parse failure.
 
-- Use `sum(1)` in place of `count(*)`. `SELECT col, sum(1) AS n FROM "<resource_id>" GROUP BY col ORDER BY n DESC LIMIT 10` returns exactly what the blocked `count(*)` form would.
+- For a new, permitted aggregation, `SELECT col, sum(1) AS n FROM "<resource_id>" GROUP BY col ORDER BY n DESC LIMIT 10` is a historically observed query form. Do not rewrite a denied operation to bypass a security control.
 - For a plain row count you do not need SQL at all: `datastore_search`'s `total` field already carries it.
 - **SQL is the one way to get real keyset paging.** `filters` cannot do it, but `SELECT ... FROM "<rid>" WHERE _id > <last_id> ORDER BY _id LIMIT <n>` works and stays fast at any depth, unlike deep `offset`.
 - **Read the response SHAPE before diagnosing anything.** data.gov.il answers the two failure classes completely differently, and conflating them sends an agent into the wrong fix:
   - **JSON with HTTP 409** and a `psycopg2` message = your SQL reached Postgres and Postgres rejected it (unknown column, bad syntax, unknown table). Read the message and fix the query.
-  - **An HTML page with HTTP 404, about 1.4 kB** = the request never reached the SQL layer at all. This is the site's GENERIC error page and it has at least three distinct causes: a WAF-matched substring, an undefined action name, and a resource_id that does not exist. Do NOT assume it means the WAF. Disambiguate by re-running a known-good query (`SELECT * FROM "<rid>" LIMIT 1`) on the same resource: if that succeeds, the resource is fine and your SQL tripped the WAF; if it also returns HTML, the resource_id is dead or the action name is wrong.
+  - **HTML with HTTP 404** is ambiguous: historical causes include a security block, an undefined action and a missing resource. Check existing metadata and official documentation; do not diagnose the cause from status alone or probe by changing a potentially denied query. For an explicit security/access denial, stop the operation, report it and contact official support. Do not change cookies, User-Agent, client, proxy or query shape to evade it. Ordinary documented alternatives may be used only where they do not evade the denial.
 
 **Tips:**
 - Field names are often in Hebrew -- use `datastore_search` with `limit=1` first to see field names
@@ -89,7 +89,7 @@ GET https://data.gov.il/api/3/action/datastore_search?resource_id=RESOURCE_ID&q=
 - Page with `limit` + `offset`: the response returns `_links.next` (an offset-based next-page URL) you can follow, or you can increment `offset` yourself. Deep `offset` paging still works (large offsets return data, there is no hard cap), but the further you page the slower each request gets.
 - data.gov.il's `filters` does exact matching only, so there is no `_id` keyset paging **through `filters`**: `filters={"_id":">N"}` returns `success:false` (an invalid query). Use offset paging, or `datastore_search_sql` with `WHERE _id > N ORDER BY _id`, which does give true keyset paging (see Step 3).
 - For very large or full-table extractions, pass `records_format=csv`, or download the resource file from `resources[].url` in `package_show`. Note that the resource file is often **XLSX rather than CSV** (the mosdot resource is), so `records_format=csv` is the reliable CSV path; check `resources[].format` before assuming.
-- The response `total` field is the count of all records in the resource (not in the page), so use it to plan how many pages you need.
+- The response `total` counts records matching that request's filters (not just the page), so use it to plan pagination and retain all required filters in each request.
 - `records_format` accepts `objects` (default JSON), `lists` (positional arrays), `csv`, or `tsv`. `lists` and `csv` are noticeably faster and cheaper for large pulls; reach for them when streaming or bulk-extracting.
 
 ### Step 3b: Data-Layer Traps (read this before quoting any figure)
@@ -189,11 +189,14 @@ Actions (do not skip the lookup steps -- resource IDs rotate):
    # full-text search for Tel Aviv schools (q = "תל אביב", percent-encoded)
    curl -s "https://data.gov.il/api/3/action/datastore_search?resource_id=5548fd63-5868-4053-ad81-98caddc5e232&q=%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&limit=100"
    ```
-   The numeric CBS locality code (Tel Aviv-Yafo 5000, Haifa 4000, Jerusalem 3000) is the field `סמל_ישוב`, but it lives in the CBS localities dataset (resource `5c78e9fa-c2e2-4771-93ff-7f400a12f7ba`), not in the mosdot resource. Its values are **space-padded text**, so match on `TRIM(...)`, and normalize the city name before any join (see Step 3b).
+   The numeric CBS locality code (Tel Aviv-Yafo 5000, Haifa 4000, Jerusalem 3000) is the field `סמל_ישוב`, but it lives in the CBS localities dataset (resource `5c78e9fa-c2e2-4771-93ff-7f400a12f7ba`), not in the mosdot resource. Its values are **space-padded text**: inspect the raw value and use exact `filters` matching, e.g. `{"סמל_ישוב":"5000 "}`, or `q=` for discovery. Normalize city names locally before joining. Do not use SQL TRIM on Hebrew columns (see Step 3b).
 5. **Pick a year, or the answer is five years of duplicates.** The mosdot resource is a per-year panel covering 2011 to 2015 only, so the unfiltered `q=תל אביב` result of 18,574 is not a school count. `שנה` is a Hebrew-named column, so filter it through `datastore_search`, NOT through SQL (a WHERE on a Hebrew column is WAF-blocked, see Step 3b):
    ```
-   # schools in the 2015 slice, filtered by year through `filters`
-   curl -s 'https://data.gov.il/api/3/action/datastore_search?resource_id=5548fd63-5868-4053-ad81-98caddc5e232&filters=%7B%22%D7%A9%D7%A0%D7%94%22%3A%222015%22%7D&limit=1'
+   # Tel Aviv-Yafo AND year 2015 in the same request; requests do not retain filters
+   curl -sG 'https://data.gov.il/api/3/action/datastore_search' \
+     --data-urlencode 'resource_id=5548fd63-5868-4053-ad81-98caddc5e232' \
+     --data-urlencode 'filters={"שם ישוב":"תל אביב - יפו","שנה":"2015"}' \
+     --data-urlencode 'limit=1'
    ```
    Read `total` from that response for the count. The per-year breakdown itself is a legal SQL query, because `GROUP BY` on a Hebrew column is allowed where `WHERE` is not:
    ```
@@ -205,14 +208,14 @@ Result: a school list for Tel Aviv for a NAMED year, presented with its 2015 vin
 ### Example 2: A Request the Catalog Cannot Serve
 User says: "Show me housing price trends in Haifa"
 
-The right answer here is to STOP, not to keep searching. Real-estate transactions are not on data.gov.il: `q=nadlan` returns count 0, and the Tax Authority's four CKAN datasets are all customs (verified 2026-08-27).
+The historical check on 2026-08-27 found no real-estate transactions on data.gov.il: `q=nadlan` returned count 0, and the Tax Authority's four CKAN datasets were all customs. That observation does not prove the catalog cannot change.
 
 Actions:
 1. Run the discovery search once so the answer is evidence-based, not assumed.
 2. On a zero or irrelevant count, say so plainly and redirect to `nadlan.gov.il`, which publishes transaction data through its own non-CKAN API.
 3. Do NOT fall back to a plausible-looking dataset from a different organization, and do NOT synthesize figures.
 
-Result: the user is sent to the source that actually has the data, in one turn instead of three. This example exists because the failure mode it prevents (searching, finding nothing, and inventing a dataset) is the most damaging thing an agent can do with this skill.
+Result: a referral to the appropriate source with the actual discovery result, without a numerical analysis unsupported by retrieved data.
 
 ### Example 3: Municipal Data Comparison
 User says: "Compare education spending across Israeli cities"
@@ -223,7 +226,7 @@ Actions:
 3. `datastore_search` filtered to education-category rows; page with `offset` (or download the resource CSV) for large resources.
 4. To normalize per capita you need population, which is **not** on CKAN (`fq=organization:lamas` carries no population table). Take it from `cbs.gov.il` and say where it came from, or present absolute figures and state that no per-capita normalization was applied.
 
-Result: Ranked comparison of education spending per student across major Israeli municipalities with data source and year.
+Result: Comparison of absolute education spending, or spending per resident only if a compatible population denominator was obtained, with source and year for each input. Per-student spending requires separate student counts.
 
 ## Bundled Resources
 
@@ -252,8 +255,8 @@ When this skill walks the user through a query, prefer the dedicated MCP if it's
 - The data.gov.il API returns data with Hebrew column headers by default. Agents may fail to parse responses that contain non-ASCII header names in JSON or CSV output.
 - Hebrew filter values and `q` parameters must be UTF-8 percent-encoded. Raw Hebrew in URLs breaks several HTTP clients (some `curl` builds, older `requests` versions, certain proxies). Example: search for "רכב" as `q=%D7%A8%D7%9B%D7%91`; filter on "חיפה" as `filters=%7B%22city%22%3A%22%D7%97%D7%99%D7%A4%D7%94%22%7D`.
 - Rate limiting is undocumented, and its severity is easy to overstate. **Verified 2026-08-27: 25 rapid sequential `datastore_search` calls in 6.5 seconds all returned 200, and roughly 60 calls across a session drew no throttling at all.** Treat a modest delay as courtesy rather than as a documented requirement, and do not tell a user their problem is rate limiting without evidence; the block people actually hit is the SQL-pattern WAF below.
-- The data.gov.il WAF blocks SQL that matches an injection signature (`count(`, `1=1`, `UNION` were all confirmed on 2026-08-27) and answers with an **HTML 404 page of about 1.4 kB**, not JSON and not a 403. Rephrasing the query fixes it immediately; backing off does not, because nothing is throttled. A 403 with the body `Security Violation` was observed in June 2026 but could NOT be reproduced on 2026-08-27; if you do see one, treat it as a session-level block (drop cookies, fresh `User-Agent`, exponential backoff) rather than a query problem.
-- Many government datasets have date fields in DD/MM/YYYY format (Israeli convention), not ISO 8601. Agents may parse "01/02/2026" as February 1st instead of January 2nd.
+- Historical security blocks included an HTML 404 for some SQL patterns and a 403 `Security Violation`. Neither establishes current endpoint behaviour. On an explicit security/access denial, stop, report it and contact official support; do not rotate cookies, User-Agent, client or proxy, or rewrite the query to evade the block. A structured validation error can be corrected normally; an ambiguous HTML response is not such permission.
+- Many government datasets have date fields in DD/MM/YYYY format (Israeli convention), not ISO 8601. Under that format "01/02/2026" means February 1st; parsing it as January 2nd is the mistake.
 - Deep offset paging gets progressively slower on large datasets (verified 2026-08-27: `offset=500000` still returns 200, so there is no hard cap, but big offsets are expensive). `filters` cannot do keyset paging (`{"_id":">N"}` fails with `success:false`), but `datastore_search_sql` with `WHERE _id > N ORDER BY _id` can, and it is the right tool for a full extraction.
 
 ## Reference Links
@@ -282,8 +285,8 @@ Solution: read `resources[].datastore_active` from `package_show` or `resource_s
 
 ### Error: an HTML page instead of JSON from `datastore_search_sql`
 Cause (verified 2026-08-27): the request never reached the SQL layer. The 1,376-byte HTML 404 is the site's GENERIC error page, shared by three causes: the WAF matched an injection-signature substring in your SQL (`count(`, `1=1` and `UNION` all trigger it), OR the action name does not exist, OR the resource_id does not exist. A client that only inspects `success` sees a parse failure in all three cases.
-Solution: disambiguate first. Re-run `SELECT * FROM "<resource_id>" LIMIT 1`. If that succeeds, your SQL tripped the WAF: replace `count(*)` with `sum(1)`, take plain row counts from `datastore_search`'s `total`, and avoid `UNION` and tautologies. If it also returns HTML, the resource_id is dead (re-resolve it with `package_show`) or the action name is wrong. The SQL endpoint itself is NOT disabled: plain `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY` and `sum()` all return 200 with data.
-Verified NOT to be the cause: rate limiting (25 rapid calls in 6.5s all returned 200), and a genuine SQL error, which returns **JSON with HTTP 409** and a `psycopg2` message rather than HTML.
+Solution: inspect the status and response type, then check existing metadata and official documentation. Do not probe or rephrase a potentially denied operation. If access was denied, stop, report it and contact official support. Correct a query only when a structured validation diagnostic establishes an ordinary caller error; do not use alternative syntax or endpoints to evade a security block.
+The historical successful requests do not rule out current rate limits or service changes. A JSON HTTP 409 may contain a useful database or validation message; the helper preserves that message.
 
 ### Error: `Connection error: [SSL: CERTIFICATE_VERIFY_FAILED]` from the bundled script
 Cause: a python.org build on macOS ships without a populated CA store, so `urllib` cannot verify data.gov.il's certificate. This is a local trust-store problem, not a data.gov.il fault; `curl` on the same machine succeeds.
@@ -291,7 +294,7 @@ Solution: the script now prefers `certifi`'s bundle when it is installed (`pip i
 
 ### `success:true` with `total: 0`, and the data plainly exists
 Cause (verified 2026-08-27): almost always a space-padded text column. `filters={"סמל_ישוב":"4000"}` on the CBS localities resource returns zero rows because the stored value is `"4000 "`. Numeric-looking codes are stored as `text`, so `"4000"` and `4000` are also different.
-Solution: inspect the raw value with `limit=1` first, then either match the exact padded string or use `datastore_search_sql` with `WHERE TRIM("col") = 'value'`. See Step 3b.
+Solution: inspect the raw value with `limit=1` first, then match the exact padded string through `filters` (e.g. `{"סמל_ישוב":"4000 "}`), or use `q=` for discovery. Normalize locally if needed; do not use SQL TRIM on Hebrew columns. See Step 3b.
 
 ### Hebrew field names
 Not an error. Most datasets have Hebrew column names, sometimes with a space (`שם ישוב`) and sometimes an underscore (`שם_ישוב`) in different resources. Query with `limit=1` first to read the exact field names, and percent-encode them in URLs.

@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 import sys
 import ssl
@@ -47,31 +48,48 @@ def api_get(endpoint: str, params: dict = None) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(data, dict):
+                print("API error: expected a CKAN response object.", file=sys.stderr)
+                sys.exit(1)
             if data.get("success"):
                 return data.get("result", {})
             else:
                 print(f"API error: {data.get('error', 'Unknown error')}", file=sys.stderr)
                 sys.exit(1)
     except urllib.error.HTTPError as e:
-        if e.code == 404:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"HTTP error {e.code}: {e.reason}", file=sys.stderr)
+        try:
+            error_data = json.loads(body)
+        except json.JSONDecodeError:
+            error_data = None
+        if isinstance(error_data, dict):
+            print("API error: " + json.dumps(
+                error_data.get("error", error_data), ensure_ascii=False
+            ), file=sys.stderr)
+        else:
+            print("The server returned a non-JSON error response.", file=sys.stderr)
+        if e.code in (401, 403) or "security violation" in body.lower():
             print(
-                "HTTP 404 with an HTML body. The request never reached the SQL "
-                "or datastore layer, and this generic error page has three "
-                "possible causes:\n"
-                "  1. the WAF matched an injection-signature substring in your "
-                "SQL (`count(`, `1=1`, `UNION`). Use sum(1) instead of "
-                "count(*), or take a row count from datastore_search's total.\n"
-                "  2. the resource_id does not exist. Re-resolve it with "
-                "`dataset <slug>`; resource IDs rotate.\n"
-                "  3. the action name is wrong.\n"
-                "Disambiguate by running a known-good query on the same "
-                "resource: sql 'SELECT * FROM \"<resource_id>\" LIMIT 1'.\n"
-                "A genuine SQL error looks different: JSON with HTTP 409 and a "
-                "psycopg2 message.",
+                "Access was denied. Stop this operation, report the denial and "
+                "contact official support. Do not change identity, session or "
+                "query shape to evade the denial.",
                 file=sys.stderr,
             )
-            sys.exit(1)
-        print(f"HTTP error {e.code}: {e.reason}", file=sys.stderr)
+        elif e.code == 404:
+            print(
+                "A 404 alone does not distinguish a missing resource/action from "
+                "a security block. Check existing metadata and official "
+                "documentation; do not probe or rewrite a denied query.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        print(
+            "API error: expected UTF-8 JSON but received an invalid or non-JSON "
+            "response. No records were parsed; check the service response before "
+            "retrying. Do not evade a security denial.", file=sys.stderr
+        )
         sys.exit(1)
     except urllib.error.URLError as e:
         if isinstance(e.reason, ssl.SSLCertVerificationError):
@@ -147,9 +165,8 @@ def run_sql(sql: str, as_json: bool = False) -> None:
     """Run a SQL query via datastore_search_sql.
 
     This is the only route to real keyset paging (WHERE _id > N ORDER BY _id)
-    and to aggregation. Note that the WAF rejects SQL containing `count(`,
-    `1=1` or `UNION` with an HTML 404 rather than a JSON error; use `sum(1)`
-    in place of `count(*)`.
+    and to aggregation. A non-JSON error is not a SQL diagnostic. Do not
+    rewrite a query to bypass a security denial.
     """
     result = api_get("action/datastore_search_sql", {"sql": sql})
     records = result.get("records", [])
@@ -197,24 +214,41 @@ def query_datastore(resource_id: str, limit: int = 50, offset: int = 0,
     total = result.get("total", 0)
     records = result.get("records", [])
     result_fields = result.get("fields", [])
+    field_names = [f.get("id", "") for f in result_fields]
 
-    print(f"Total records: {total}")
-    if isinstance(records, list):
-        print(f"Showing: {len(records)} (offset {offset})")
-    print(f"Fields: {', '.join(f.get('id', '') for f in result_fields)}")
-    print()
-
-    if not isinstance(records, list):
-        # records_format=csv/tsv returns a single headerless string. The column
-        # names live only in result["fields"], in order, so print them first or
-        # the Hebrew columns silently misalign.
-        print(",".join(f.get("id", "") for f in result_fields))
-        print(records)
+    if isinstance(records, str) and records_format in ("csv", "tsv"):
+        # CKAN returns headerless delimited text. Keep stdout a valid export;
+        # quote field names and use the same delimiter as the requested body.
+        writer = csv.writer(sys.stdout, delimiter="\t" if records_format == "tsv" else ",",
+                            lineterminator="\n")
+        writer.writerow(field_names)
+        sys.stdout.write(records)
+        if records and not records.endswith(("\n", "\r")):
+            sys.stdout.write("\n")
         return
 
-    for i, record in enumerate(records):
+    if not isinstance(records, list):
+        print("API error: unexpected records shape.", file=sys.stderr)
+        sys.exit(1)
+
+    normalized_records = []
+    for record in records:
+        if isinstance(record, dict):
+            normalized_records.append(record.items())
+        elif isinstance(record, list) and len(record) == len(field_names):
+            normalized_records.append(zip(field_names, record))
+        else:
+            print("API error: record shape does not match result.fields.", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Total records: {total}")
+    print(f"Showing: {len(records)} (offset {offset})")
+    print(f"Fields: {', '.join(field_names)}")
+    print()
+
+    for i, record in enumerate(normalized_records):
         print(f"--- Record {offset + i + 1} ---")
-        for key, value in record.items():
+        for key, value in record:
             # _id is kept: it is what you need for keyset paging
             # (WHERE _id > <last _id>) via the `sql` subcommand.
             if key == "_full_text":
